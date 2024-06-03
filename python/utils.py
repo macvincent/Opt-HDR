@@ -16,7 +16,7 @@ def load_raw_images(files_path):
     for path in files_path:
         with rawpy.imread(path) as raw:
             # print noise model of the raw image
-            raw_images.append(raw.raw_image.copy())
+            raw_images.append(raw.raw_image_visible.copy())
     raw_images = np.stack(raw_images)
     raw_images = raw_images.astype(np.float32)
     return raw_images
@@ -24,15 +24,15 @@ def load_raw_images(files_path):
 def select_reference_image(raw_images):
     """Select the reference image from the given raw images"""
     gradient_magnitudes = []
-    d_depth = cv2.CV_64F
-    for i in range(raw_images.shape[0]):
+    for i in range(raw_images[:3].shape[0]):
         di, dj = 0, 1
+        # select the green channel
         image = raw_images[i, di::2, dj::2]
-        sobel = cv2.Sobel(image, d_depth, 1, 1, ksize=9) 
-        gradient_magnitude = sobel.sum() / (image.shape[0] * image.shape[1])
+        gy, gx = np.gradient(image.astype(np.float32))
+        gradient_magnitude = np.sqrt(gx**2 + gy**2).sum()
         gradient_magnitudes.append(gradient_magnitude)
 
-    return gradient_magnitudes.index(min(gradient_magnitudes))
+    return gradient_magnitudes.index(max(gradient_magnitudes))
 
 def upsample_image(image, height, width):
     """Nearest-neighbor upsample the given image to the given shape"""
@@ -73,6 +73,7 @@ def demo_images(merged_bayer, ref_image_name, ref_image_path):
 
     gt_image_path = folder_names(ref_image_name)[1] + 'merged.dng'
     gt_rgb = load_raw_images([gt_image_path])[0]
+    # TODO: Use DCRAW postprocessing parameters
     gt_rgb = get_rgb_values(gt_image_path, bayer_array=gt_rgb, bright=brigthness, no_auto_bright=True)
     plt.imshow(gt_rgb)
     plt.show()

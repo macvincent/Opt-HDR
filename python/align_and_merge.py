@@ -18,6 +18,7 @@ def align_and_merge_channel(raw_images, ref_image_index):
 
     aligned_burst_patches = align(motion_matrix, raw_images)
 
+    # temporal and spatial denoising
     final_merged_frame = merge_images(aligned_burst_patches, ref_image_index)
 
     final_merged_bayer = merge_patches(final_merged_frame)

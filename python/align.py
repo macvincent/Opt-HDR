@@ -66,7 +66,7 @@ def align_level_images(level, pyramid_level_images, motion_matrix, reference_ima
                             continue
 
                         # L2 norm
-                        if level < 2:
+                        if level > 2:
                             # [TODO]: Implement optimized L2 norm
                             block_error = np.sum((reference_block - target_block)**2)
                         else:
@@ -102,7 +102,7 @@ def burst_align(reference_image_index, raw_images):
         # Update the motion vectors
     return motion_matrix
 
-def align(motion_matrix, raw_images, block_size=8):
+def align(motion_matrix, raw_images, block_size=16):
     print(motion_matrix.shape, raw_images.shape)
     aligned_burst_patches = []
     for i in tqdm(range(raw_images.shape[0])):
