@@ -50,8 +50,8 @@ def merge_images(aligned_images, reference_image_index, temporal_denoise=True, s
                     if i == reference_image_index:
                         continue
                     alt_dft = np.array(aligned_images[i][row][col])
-                    # if dft_ref.shape != alt_dft.shape:
-                    #     continue
+                    if dft_ref.shape != alt_dft.shape or alt_dft.shape[0] == 0:
+                        continue
                     alt_dft = th.fft.fftn(th.from_numpy(alt_dft), dim=(0, 1)).numpy()
 
                     difference = dft_ref - alt_dft
