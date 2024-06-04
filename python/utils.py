@@ -2,6 +2,7 @@ import rawpy
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
+import concurrent.futures
 
 def get_rgb_values(image_path, bayer_array=None, **kwargs):
     with rawpy.imread(image_path) as raw:
@@ -21,6 +22,23 @@ def load_raw_images(files_path):
     raw_images = raw_images.astype(np.float32)
     return raw_images
 
+def parallel_load_raw_images(files_path):
+    """Load raw images from the given path"""
+    len_files_path = len(files_path)
+    raw_images = [None] * len_files_path
+    
+    def load_raw_image(path, i):
+        """Helper function to load a single raw image"""
+        with rawpy.imread(path) as raw:
+            raw_images[i] = raw.raw_image_visible.copy()
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        executor.map(load_raw_image, files_path, range(len_files_path))
+    raw_images = np.stack(raw_images)
+    raw_images = raw_images.astype(np.float32)
+
+    return raw_images
+
 def select_reference_image(raw_images):
     """Select the reference image from the given raw images"""
     gradient_magnitudes = []
@@ -32,6 +50,24 @@ def select_reference_image(raw_images):
         gradient_magnitude = np.sqrt(gx**2 + gy**2).sum()
         gradient_magnitudes.append(gradient_magnitude)
 
+    return gradient_magnitudes.index(max(gradient_magnitudes))
+
+
+def compute_gradient_magnitude(args):
+    i, raw_images = args
+    di, dj = 0, 1
+    image = raw_images[i, di::2, dj::2]
+    gy, gx = np.gradient(image.astype(np.float32))
+    gradient_magnitude = np.sqrt(gx**2 + gy**2).sum()
+    return gradient_magnitude
+
+def parallel_select_reference_image(raw_images):
+    """Select the reference image from the given raw images"""
+    num_images = raw_images[:3].shape[0]
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        gradient_magnitudes = list(executor.map(compute_gradient_magnitude, [(i, raw_images) for i in range(num_images)]))
+    
     return gradient_magnitudes.index(max(gradient_magnitudes))
 
 def upsample_image(image, height, width):
@@ -88,7 +124,7 @@ def demo_images(merged_bayer, ref_image_name, ref_image_path):
 
     display_crop(gt_rgb, merged_rgb)
     
-def load_ground_truth_reference_image(ref_image_name):
+def load_ground_truth_reference_image_index(ref_image_name):
     ref_image_path = folder_names(ref_image_name)[1] + 'reference_frame.txt'
     file = open(ref_image_path, 'r')
     ref_image_index = int(next(file))

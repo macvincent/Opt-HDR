@@ -1,6 +1,8 @@
 import numpy as np
 import torch as th
 from tqdm import tqdm
+import concurrent.futures
+from numba import njit, prange
 
 # Reference: From IPOL article: https://www.ipol.im/pub/art/2021/336/article_lr.pdf
 def patch_shift(patchSize, patchSize_y, noiseVariance, spatialFactor):
@@ -80,6 +82,7 @@ def merge_images(aligned_images, reference_image_index, temporal_denoise=True, s
             aligned_row.append(final_patch)
         aligned_image.append(aligned_row)
     return aligned_image
+
 
 def merge_patches(final_patches):
     stacked_patches = []
