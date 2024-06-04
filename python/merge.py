@@ -5,11 +5,12 @@ import concurrent.futures
 from numba import njit, prange
 
 # Reference: From IPOL article: https://www.ipol.im/pub/art/2021/336/article_lr.pdf
+@njit
 def patch_shift(patchSize, patchSize_y, noiseVariance, spatialFactor):
 	'''Spatially denoise a set of 2D Frequency-domain patches'''
 	rowDistances = (np.arange(patchSize) - patchSize / 2).reshape(-1, 1).repeat(patchSize_y, 1)
 	columnDistances = rowDistances.T
-	distancePatch = np.sqrt(rowDistances**2 + columnDistances**2)
+	distancePatch = np.sqrt(np.square(rowDistances) + np.square(columnDistances))
 	distPatchShift = np.fft.ifftshift(distancePatch, axes=(-2, -1))
 	noiseScaling = patchSize**2 * 1 / 4**2
 	noiseScaling *= spatialFactor
@@ -68,7 +69,8 @@ def merge_images(aligned_images, reference_image_index, temporal_denoise=True, s
                     final_patch += alt_dft
             final_patch /= num_aligned_images
     
-            if spatial_denoise:
+            if False:
+                # We ignore spatial denoising due to reshaping after half shift
                 # Spatial Denoising
                 spatial_variance = patch_shift(reference_image_patch.shape[-1], reference_image_patch.shape[-1], noise_variance, 0.05)
                 final_patch_squared = np.square(final_patch.real) + np.square(final_patch.imag)
@@ -89,3 +91,62 @@ def merge_patches(final_patches):
     for row in final_patches:
         stacked_patches.append(np.hstack(row))
     return np.vstack(stacked_patches)
+
+@njit
+def jit_fft(x):
+    return np.fft.fft(x)
+
+@njit
+def jit_ifft(x):
+    return np.fft.ifftn(x)
+
+@njit
+def parallel_merge_images(aligned_images, reference_image_index, merged_image, temporal_denoise=True, spatial_denoise=False):
+    """Merge the given raw images using the given motion matrix"""
+    shot_noise = 30.0
+    read_noise = 5.0
+
+    num_rows = aligned_images[0].shape[0]
+    num_cols = aligned_images[0][0].shape[0]
+    num_aligned_images = aligned_images.shape[0]
+
+    for row in range(num_rows):
+        for col in range(num_cols):
+            reference_image_patch = aligned_images[reference_image_index][row][col]
+            path_rms = np.sqrt(np.mean(np.square(reference_image_patch)))
+            # dft_ref = th.fft.fftn(th.from_numpy(reference_image_patch), dim=(0, 1)).numpy()
+            dft_ref = jit_fft(reference_image_patch)
+            noise_variance = shot_noise * path_rms + read_noise
+            temporal_factor = 8
+            k = reference_image_patch.shape[0] * reference_image_patch.shape[1] / 8
+            noise = k * temporal_factor * noise_variance
+
+            # Temporal Denoising
+            final_patch = dft_ref.copy()
+            for i in range(num_aligned_images):
+                if i == reference_image_index:
+                    continue
+                alt_dft = aligned_images[i][row][col]
+                if dft_ref.shape != alt_dft.shape or alt_dft.shape[0] == 0:
+                    continue
+                alt_dft = jit_fft(alt_dft)
+
+                difference = dft_ref - alt_dft
+                difference_squared = np.square(difference.real) + np.square(difference.imag)
+                shrinkage_operator = difference_squared / (difference_squared + noise)
+                final_patch += (1 - shrinkage_operator) * alt_dft + shrinkage_operator * dft_ref
+            final_patch /= num_aligned_images
+    
+            # Spatial Denoising
+            # We ignore spatial denoising due to reshaping after half shift
+            if False:
+                spatial_variance = patch_shift(reference_image_patch.shape[-1], reference_image_patch.shape[-1], noise_variance, 0.05)
+                final_patch_squared = np.square(final_patch.real) + np.square(final_patch.imag)
+                
+                if final_patch_squared.shape != spatial_variance.shape:
+                    offset = np.array(spatial_variance.shape) // np.array(final_patch_squared.shape)
+                    spatial_variance = spatial_variance[::offset[0], ::offset[1]]
+                shrinkage_operator = final_patch_squared / (final_patch_squared + spatial_variance)
+                final_patch = shrinkage_operator * final_patch
+            merged_image[row][col] =  jit_ifft(final_patch).real
+    return merged_image

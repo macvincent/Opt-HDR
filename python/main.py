@@ -52,15 +52,32 @@ def naive_speed_benchmark(image_name):
     ref_image_selection_time = time.time() - start
     print("Time taken for reference image selection: ", ref_image_selection_time)
 
-    print("Aligning and merging channels...")
+    print("Aligning...")
     start = time.time()
-    align_and_merge_channel(raw_images, ref_image_index)
-    align_and_merge_time = time.time() - start
-    print("Time taken: ", align_and_merge_time)
+    downsampled_raw_images = np.array([gaussian_downsample(raw_image, 2) for raw_image in raw_images])
+
+    # Generate alignment matrix using pyramid block matching
+    motion_matrix = burst_align(ref_image_index, downsampled_raw_images)
     
-    total_time = memory_io_time_serial + ref_image_selection_time + align_and_merge_time
+    # Upsample the motion matrix to the original image size
+    motion_matrix = upsample_image(motion_matrix, raw_images.shape[1], raw_images.shape[2]) * 2
+
+    aligned_burst_patches = align(motion_matrix, raw_images)
+    align_time = time.time() - start
+    print("Time taken for alignment: ", align_time)
+
+    # temporal and spatial denoising
+    print("Merging...")
+    start = time.time()
+    final_merged_frame = merge_images(aligned_burst_patches, ref_image_index)
+
+    final_merged_bayer = merge_patches(final_merged_frame)
+    merge_time = time.time() - start
+    print("Time taken: ", merge_time)
+
+    total_time = memory_io_time_serial + ref_image_selection_time + align_time + merge_time
     print("Total time taken: ", total_time)
-    return total_time
+    return memory_io_time_serial, ref_image_selection_time, align_time, merge_time, total_time
 
 def parallel_speed_benchmark(image_name):
     print("\n\nRunning naive speed benchmark")
@@ -76,23 +93,60 @@ def parallel_speed_benchmark(image_name):
     ref_image_selection_time = time.time() - start
     print("Time taken for reference image selection: ", ref_image_selection_time)
 
-    print("Aligning and merging channels...")
+    print("Aligning...")
     start = time.time()
-    parallel_align_and_merge_channel(raw_images, ref_image_index)
-    align_and_merge_time = time.time() - start
-    print("Time taken: ", align_and_merge_time)
+    downsampled_raw_images = np.array([gaussian_downsample(raw_image, 2) for raw_image in raw_images])
 
-    total_time = memory_io_time_parallel + ref_image_selection_time + align_and_merge_time
+    # Generate alignment matrix using pyramid block matching
+    motion_matrix = burst_align(ref_image_index, downsampled_raw_images, parallel=True)
+
+    # Upsample the motion matrix to the original image size
+    motion_matrix = upsample_image(motion_matrix, raw_images.shape[1], raw_images.shape[2]) * 2
+
+    aligned_burst_patches = parallel_align(motion_matrix, raw_images)
+
+    align_time = time.time() - start
+    print("Time taken for parallel alignment: ", align_time)
+
+    print("Merging...")
+    # temporal and spatial denoising
+    start = time.time()
+    aligned_burst_patches = np.array(aligned_burst_patches)
+    final_merged_frame = aligned_burst_patches[0]
+    final_merged_frame = parallel_merge_images(aligned_burst_patches, ref_image_index, final_merged_frame)
+
+    final_merged_bayer = merge_patches(final_merged_frame)
+    merge_time = time.time() - start
+
+    total_time = memory_io_time_parallel + ref_image_selection_time + align_time + merge_time
     print("Total time taken: ", total_time)
-    return total_time
+    return memory_io_time_parallel, ref_image_selection_time, align_time, merge_time, total_time
     
 def main():
-    image_name = "0127_20161107_171749_524"
-    # naive_speed = naive_speed_benchmark(image_name)
-    parallel_speed = parallel_speed_benchmark(image_name)
-    # print("\n\nSpeedup: ", naive_speed/parallel_speed)
+    num_trials = 5
+    image_name = "c1b1_20150226_144326_422"
     
-    # Time taken:  48.35582995414734
-    # Total time taken:  50.69356656074524
+    naive_speed_benchmark_scores = []
+    parallel_speed_benchmark_scores = []
+
+    for trial in range(num_trials):
+        print("\n\nTrial: ", trial)
+        memory_io_time_parallel, ref_image_selection_time_parallel, align_time_parallel, merge_time_parallel, total_time_parallel = parallel_speed_benchmark(image_name)
+        memory_io_time_serial, ref_image_selection_time_serial, align_time_serial, merge_time_serial, total_time_serial = naive_speed_benchmark(image_name)
+
+        naive_speed_benchmark_scores.append([memory_io_time_serial, ref_image_selection_time_serial, align_time_serial, merge_time_serial, total_time_serial])
+        parallel_speed_benchmark_scores.append([memory_io_time_parallel, ref_image_selection_time_parallel, align_time_parallel, merge_time_parallel, total_time_parallel])
+
+    # min speed from benchmark
+    naive_speed_benchmark_scores = np.array(naive_speed_benchmark_scores)
+    parallel_speed_benchmark_scores = np.array(parallel_speed_benchmark_scores)
+    
+    naive_speed_benchmark_scores = np.min(naive_speed_benchmark_scores, axis=0)
+    parallel_speed_benchmark_scores = np.min(parallel_speed_benchmark_scores, axis=0)
+    
+    print("Stages: Memory I/O, Reference Image Selection, Alignment, Merge, Total")
+    print("Naive speed benchmark: ", naive_speed_benchmark_scores)
+    print("Parallel speed benchmark: ", parallel_speed_benchmark_scores)
+
 if __name__ == '__main__':
     main()

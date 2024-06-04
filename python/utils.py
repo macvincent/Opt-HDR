@@ -32,7 +32,7 @@ def parallel_load_raw_images(files_path):
         with rawpy.imread(path) as raw:
             raw_images[i] = raw.raw_image_visible.copy()
 
-    with concurrent.futures.ThreadPoolExecutor() as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(files_path)) as executor:
         executor.map(load_raw_image, files_path, range(len_files_path))
     raw_images = np.stack(raw_images)
     raw_images = raw_images.astype(np.float32)
